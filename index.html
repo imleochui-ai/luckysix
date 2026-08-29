@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>易學嚴格解卦系統</title>
+  <style>
+    :root { --bg: #0f1117; --card: #1a1d24; --text: #e1e4ea; --accent: #c99846; --border: #2d3139; --btn: #2b303c; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "PingFang HK", sans-serif; background: var(--bg); color: var(--text); padding: 16px; margin: 0; }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin-bottom: 16px; }
+    h2, h3 { margin-top: 0; color: var(--accent); font-size: 1.1rem; }
+    label { display: block; font-size: 0.85rem; color: #8b949e; margin-bottom: 4px; }
+    input, select, textarea { width: 100%; box-sizing: border-box; background: var(--bg); border: 1px solid var(--border); color: #fff; padding: 10px; border-radius: 8px; margin-bottom: 12px; font-size: 0.95rem; }
+    .row { display: flex; gap: 8px; }
+    .row > div { flex: 1; }
+    
+    /* 爻象 3/2 防呆輸入區 */
+    .line-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; background: var(--btn); padding: 8px 12px; border-radius: 6px; }
+    .line-label { font-size: 0.85rem; width: 60px; }
+    .coin-group { display: flex; gap: 6px; }
+    .coin-select { width: 65px; margin-bottom: 0; padding: 6px; text-align: center; }
+
+    button { width: 100%; background: var(--accent); color: #000; border: none; padding: 12px; border-radius: 8px; font-weight: bold; font-size: 1rem; cursor: pointer; }
+    button:active { opacity: 0.8; }
+    .chat-box { min-height: 120px; white-space: pre-wrap; font-size: 0.95rem; line-height: 1.5; }
+    .record-block { background: #000; color: #7ee787; padding: 12px; border-radius: 6px; font-family: monospace; font-size: 0.8rem; overflow-x: auto; white-space: pre-wrap; }
+    .history-card { border-bottom: 1px solid var(--border); padding: 8px 0; font-size: 0.85rem; }
+  </style>
+</head>
+<body>
+
+  <!-- API Key 設定 -->
+  <div class="card">
+    <label>Google Gemini API Key（只需輸入一次）</label>
+    <input type="password" id="apiKey" placeholder="AIzaSy..." onchange="saveKey()">
+  </div>
+
+  <!-- 問卦者基本盤與八字 -->
+  <div class="card">
+    <h2>1. 問卦者背景與八字</h2>
+    <div class="row">
+      <div>
+        <label>姓名</label>
+        <input type="text" id="name" placeholder="例如：陳先生">
+      </div>
+      <div>
+        <label>性別</label>
+        <select id="gender">
+          <option value="男 (乾造)">男 (乾造)</option>
+          <option value="女 (坤造)">女 (坤造)</option>
+        </select>
+      </div>
+    </div>
+    
+    <label>八字干支 / 陽曆年月日時</label>
+    <div class="row">
+      <input type="text" id="baziYear" placeholder="年柱 (如 丙午)">
+      <input type="text" id="baziMonth" placeholder="月柱 (如 丙申)">
+      <input type="text" id="baziDay" placeholder="日柱 (如 戊子)">
+      <input type="text" id="baziHour" placeholder="時柱 (如 丁巳)">
+    </div>
+
+    <label>問事事由（明確鎖定用神）</label>
+    <textarea id="question" rows="2" placeholder="例如：下半年歐洲手錶業務能否順利推進？"></textarea>
+  </div>
+
+  <!-- 六爻輸入（嚴格限制 3 或 2） -->
+  <div class="card">
+    <h2>2. 六爻投擲（由下至上：初爻 至 上爻）</h2>
+    <div id="linesContainer"></div>
+  </div>
+
+  <button onclick="startConsultation()">發起斷卦推演</button>
+
+  <!-- 斷卦與追問視窗 -->
+  <div class="card" style="margin-top:16px;">
+    <h2>3. 斷卦結果與追問</h2>
+    <div id="output" class="chat-box">等待輸入資料...</div>
+    <div id="fileRecordArea" style="display:none; margin-top:12px;">
+      <label>結構化 File Record (自動存檔)</label>
+      <div id="fileRecordBlock" class="record-block"></div>
+    </div>
+
+    <!-- 追問輸入區 -->
+    <div id="followUpArea" style="display:none; margin-top:16px;">
+      <label>針對本卦追問（太極轉換 / 應期轉移）：</label>
+      <div class="row">
+        <input type="text" id="followUpQuery" placeholder="例如：若將簽約推遲至下月，轉機如何？">
+        <button style="width: 80px;" onclick="sendFollowUp()">追問</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 歷史存檔紀錄 -->
+  <div class="card">
+    <div style="display: flex; justify-content: space-between; align-items: center;">
+      <h3>歷史問卦 Records</h3>
+      <button style="width: auto; padding: 4px 8px; font-size: 0.75rem;" onclick="exportRecords()">匯出 JSON</button>
+    </div>
+    <div id="historyList"></div>
+  </div>
+
+<script>
+  const COIN_OPTS = `<option value="3">3 (背/陽)</option><option value="2">2 (字/陰)</option>`;
+  const lineNames = ["初爻", "二爻", "三爻", "四爻", "五爻", "上爻"];
+  let conversationHistory = [];
+  let currentRecord = {};
+
+  // 動態生成 6 爻防呆下拉選單 (初爻到上爻，由 6 往下排方便閱讀，初爻在最底)
+  const container = document.getElementById('linesContainer');
+  for (let i = 5; i >= 0; i--) {
+    const div = document.createElement('div');
+    div.className = 'line-row';
+    div.innerHTML = `
+      <span class="line-label">${lineNames[i]}</span>
+      <div class="coin-group">
+        <select id="line_${i}_1" class="coin-select">${COIN_OPTS}</select>
+        <select id="line_${i}_2" class="coin-select">${COIN_OPTS}</select>
+        <select id="line_${i}_3" class="coin-select">${COIN_OPTS}</select>
+      </div>
+    `;
+    container.appendChild(div);
+  }
+
+  // 讀取本地儲存
+  document.getElementById('apiKey').value = localStorage.getItem('gemini_api_key') || '';
+  renderHistory();
+
+  function saveKey() {
+    localStorage.setItem('gemini_api_key', document.getElementById('apiKey').value.trim());
+  }
+
+  function getLinesData() {
+    let lines = [];
+    for (let i = 0; i < 6; i++) {
+      const c1 = parseInt(document.getElementById(`line_${i}_1`).value);
+      const c2 = parseInt(document.getElementById(`line_${i}_2`).value);
+      const c3 = parseInt(document.getElementById(`line_${i}_3`).value);
+      const sum = c1 + c2 + c3;
+      // 6=老陰(×), 7=少陽, 8=少陰, 9=老陽(○)
+      let type = sum === 6 ? "老陰(×)" : sum === 7 ? "少陽(單)" : sum === 8 ? "少陰(拆)" : "老陽(○)";
+      lines.push(`${lineNames[i]}: [${c1},${c2},${c3}] 總和=${sum} -> ${type}`);
+    }
+    return lines;
+  }
+
+  async function callGemini(messages) {
+    const key = localStorage.getItem('gemini_api_key');
+    if (!key) throw new Error("請先輸入 Google Gemini API Key！");
+    
+    // 使用 Gemini 2.5 Flash
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`;
+    const payload = {
+      contents: messages,
+      generationConfig: { temperature: 0.15 }
+    };
+
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    
+    const data = await res.json();
+    if (data.error) throw new Error(data.error.message);
+    return data.candidates[0].content.parts[0].text;
+  }
+
+  async function startConsultation() {
+    const apiKey = document.getElementById('apiKey').value.trim();
+    if (!apiKey) return alert("請填寫 API Key");
+    saveKey();
+
+    const name = document.getElementById('name').value.trim() || "未具名";
+    const gender = document.getElementById('gender').value;
+    const bazi = `年柱:${document.getElementById('baziYear').value || '未填'} 月柱:${document.getElementById('baziMonth').value || '未填'} 日柱:${document.getElementById('baziDay').value || '未填'} 時柱:${document.getElementById('baziHour').value || '未填'}`;
+    const question = document.getElementById('question').value.trim();
+    if (!question) return alert("請輸入問事事由");
+
+    const lines = getLinesData();
+    const now = new Date().toISOString().replace('T', ' ').substring(0, 16);
+
+    const systemPrompt = `# Role & Identity
+你是一位嚴格遵循正統易理與文獻記載的「易學解卦系統」。推演完全基於《增刪卜易》、《周易本義》、《六壬大全》與標準易學納甲邏輯。
+
+# Strict Guardrails
+1. 【有就有，無就無】：吉斷吉，凶斷凶，無貴人無財直接斷無，嚴禁迎合用戶。
+2. 【嚴禁文獻幻覺】：卦爻辭必須吻合《周易本義》；六親動變必須吻合《增刪卜易》。
+3. 【八字與日月】：綜合起卦日辰、月建與當事人八字格局輔助斷事體衰旺。
+4. 【多輪追問鎖定原盤】：同一對話後續追問必須鎖定原卦盤，嚴禁擅自重新排盤。
+
+# 輸出結構：
+1. 【標準排盤】
+2. 【核心結論】（直斷成/敗/得/不得/吉/凶）
+3. 【吉凶依據】
+4. 【貴人/外力判定】
+5. 【應期預測】
+6. 【行動指引】
+7. 【File Record】文末必須輸出一份 YAML 代碼塊：
+\`\`\`yaml
+---
+Record_ID: "${now.replace(/[- :]/g, '')}"
+Name: "${name}"
+Gender: "${gender}"
+Bazi: "${bazi}"
+Question: "${question}"
+Verdict: "[成/敗/得/不得/吉/凶]"
+Reason: "[一句話核心卦理]"
+---
+\`\`\``;
+
+    const userQuery = `問卦人資訊：
+- 姓名：${name}
+- 性別：${gender}
+- 八字/起卦時間：${bazi}
+- 問事內容：${question}
+
+投擲爻象（只限3/2投擲，由初至上）：
+${lines.join('\n')}`;
+
+    conversationHistory = [
+      { role: "user", parts: [{ text: systemPrompt + "\n\n" + userQuery }] }
+    ];
+
+    document.getElementById('output').innerText = "系統正在嚴格推演排盤，核校《增刪卜易》與生剋路徑...";
+    
+    try {
+      const response = await callGemini(conversationHistory);
+      conversationHistory.push({ role: "model", parts: [{ text: response }] });
+      
+      document.getElementById('output').innerText = response;
+      document.getElementById('followUpArea').style.display = 'block';
+
+      // 提取 YAML File Record
+      const yamlMatch = response.match(/```yaml([\s\S]*?)```/);
+      if (yamlMatch) {
+        document.getElementById('fileRecordArea').style.display = 'block';
+        document.getElementById('fileRecordBlock').innerText = yamlMatch[1].trim();
+        
+        // 存入 LocalStorage
+        saveToLocalStorage({
+          id: now.replace(/[- :]/g, ''),
+          date: now,
+          name,
+          gender,
+          bazi,
+          question,
+          recordYaml: yamlMatch[1].trim()
+        });
+      }
+    } catch (e) {
+      document.getElementById('output').innerText = "錯誤: " + e.message;
+    }
+  }
+
+  async function sendFollowUp() {
+    const query = document.getElementById('followUpQuery').value.trim();
+    if (!query) return;
+
+    conversationHistory.push({ role: "user", parts: [{ text: `【原盤追問】：${query}。請在原卦盤基礎上分析，文末更新 File Record YAML。` }] });
+    document.getElementById('output').innerText += `\n\n---\n\n【追問】：${query}\n推演中...`;
+    document.getElementById('followUpQuery').value = '';
+
+    try {
+      const response = await callGemini(conversationHistory);
+      conversationHistory.push({ role: "model", parts: [{ text: response }] });
+      document.getElementById('output').innerText += `\n\n${response}`;
+
+      const yamlMatch = response.match(/```yaml([\s\S]*?)```/);
+      if (yamlMatch) {
+        document.getElementById('fileRecordBlock').innerText = yamlMatch[1].trim();
+      }
+    } catch (e) {
+      alert("追問錯誤: " + e.message);
+    }
+  }
+
+  function saveToLocalStorage(record) {
+    let records = JSON.parse(localStorage.getItem('divination_records') || '[]');
+    records.unshift(record);
+    localStorage.setItem('divination_records', JSON.stringify(records));
+    renderHistory();
+  }
+
+  function renderHistory() {
+    let records = JSON.parse(localStorage.getItem('divination_records') || '[]');
+    const el = document.getElementById('historyList');
+    if (records.length === 0) { el.innerHTML = '<span style="color:#666;">暫無存檔</span>'; return; }
+    
+    el.innerHTML = records.slice(0, 10).map(r => `
+      <div class="history-card">
+        <strong>${r.date}</strong> | ${r.name} (${r.gender})<br>
+        <span style="color:#aaa;">事由: ${r.question}</span>
+      </div>
+    `).join('');
+  }
+
+  function exportRecords() {
+    const records = localStorage.getItem('divination_records') || '[]';
+    const blob = new Blob([records], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `Divination_Records_${new Date().toISOString().slice(0,10)}.json`;
+    a.click();
+  }
+</script>
+</body>
+</html>
